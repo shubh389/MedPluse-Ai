@@ -1,0 +1,7 @@
+{
+  "name": "medipulse-ai-frontend",
+  "homepage": "/",
+  "scripts": {
+    "vercel-build": "npm run build"
+  }
+}

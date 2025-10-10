@@ -1,0 +1,48 @@
+{
+  "version": 2,
+  "name": "medipulse-ai",
+  "builds": [
+    {
+      "src": "frontend/package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "build"
+      }
+    },
+    {
+      "src": "api/**/*.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "api/ml/**/*.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/$1"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/frontend/$1"
+    }
+  ],
+  "functions": {
+    "api/predict.js": {
+      "maxDuration": 30
+    },
+    "api/ml/predict.py": {
+      "maxDuration": 30
+    }
+  },
+  "env": {
+    "ML_SERVICE_URL": "https://medipulse-ai.vercel.app/api/ml",
+    "NODE_ENV": "production"
+  },
+  "build": {
+    "env": {
+      "GENERATE_SOURCEMAP": "false"
+    }
+  }
+}
