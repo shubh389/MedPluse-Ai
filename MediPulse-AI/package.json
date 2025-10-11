@@ -1,7 +1,18 @@
 {
-  "name": "medipulse-ai-frontend",
+  "name": "medipulse-ai",
+  "version": "1.0.0",
+  "description": "Hospital Patient Load Forecasting System",
   "homepage": "/",
   "scripts": {
+    "dev": "concurrently \"npm run ml:dev\" \"npm run backend:dev\" \"npm run frontend:dev\"",
+    "ml:dev": "cd ml-service && python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
+    "backend:dev": "cd backend && npm run dev",
+    "frontend:dev": "cd frontend && npm start",
+    "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install && cd ../ml-service && pip install -r requirements.txt",
+    "build": "cd frontend && npm run build",
     "vercel-build": "npm run build"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
   }
 }

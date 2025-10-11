@@ -31,11 +31,18 @@ const FASTAPI_URL = process.env.FASTAPI_URL || 'http://localhost:8000';
 
 // Twilio setup
 let twilioClient = null;
-if (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) {
-  twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
-  logger.info('Twilio client initialized');
+if (process.env.TWILIO_ACCOUNT_SID && 
+    process.env.TWILIO_AUTH_TOKEN && 
+    process.env.TWILIO_ACCOUNT_SID.startsWith('AC')) {
+  try {
+    twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+    logger.info('Twilio client initialized');
+  } catch (error) {
+    logger.warn('Failed to initialize Twilio client:', error.message);
+    twilioClient = null;
+  }
 } else {
-  logger.warn('Twilio credentials not provided - SMS alerts disabled');
+  logger.warn('Twilio credentials not provided or invalid - SMS alerts disabled');
 }
 
 // Middleware

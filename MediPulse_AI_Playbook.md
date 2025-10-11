@@ -1,9 +1,11 @@
 # MediPulse AI - Complete Developer Playbook
 
 ## Overview
+
 This playbook provides detailed implementation guidance for 12 Copilot prompts that build an AI-powered hospital patient load forecasting system. Each section includes purpose, implementation details, pitfalls, and runnable code examples.
 
 ## Architecture Overview
+
 ```
 Data Sources → ML Model → FastAPI → Express.js → React Dashboard
      ↓            ↓          ↓          ↓            ↓
@@ -15,9 +17,11 @@ Data Sources → ML Model → FastAPI → Express.js → React Dashboard
 ## Prompt 1: Data Forecasting Model
 
 ### Purpose
+
 Create a baseline ML model that maps environmental + event features → daily patient counts using RandomForestRegressor.
 
 ### Copilot Prompt
+
 ```
 Write a Python script that predicts daily hospital patient load based on AQI, temperature, and festival data using RandomForestRegressor. The dataset should be read from a CSV file and the model should output predicted patient counts for the next 7 days.
 ```
@@ -25,6 +29,7 @@ Write a Python script that predicts daily hospital patient load based on AQI, te
 ### Implementation Details
 
 **Input CSV Schema:**
+
 ```csv
 date,city,aqi,temperature,festival,outbreak,patients_admitted
 2025-01-01,Delhi,250,18.5,New Year,0,145
@@ -32,12 +37,14 @@ date,city,aqi,temperature,festival,outbreak,patients_admitted
 ```
 
 **Feature Engineering Strategy:**
+
 - Parse dates into: `day_of_week`, `is_weekend`, `day_of_year`
 - Create lag features: `patients_t-1`, `patients_t-7`
 - Rolling averages: `patients_ma_7`, `aqi_ma_3`
 - Encode categorical: `festival` (one-hot), `outbreak` (ordinal 0-3)
 
 **Complete Implementation:**
+
 ```python
 import pandas as pd
 import numpy as np
@@ -57,131 +64,131 @@ class HospitalLoadPredictor:
             n_jobs=-1
         )
         self.feature_columns = []
-    
+
     def engineer_features(self, df):
         """Engineer temporal and lag features"""
         df = df.copy()
         df['date'] = pd.to_datetime(df['date'])
         df = df.sort_values(['city', 'date'])
-        
+
         # Temporal features
         df['day_of_week'] = df['date'].dt.dayofweek
         df['is_weekend'] = (df['day_of_week'] >= 5).astype(int)
         df['day_of_year'] = df['date'].dt.dayofyear
         df['month'] = df['date'].dt.month
-        
+
         # Lag features (by city to avoid leakage)
         df['patients_lag_1'] = df.groupby('city')['patients_admitted'].shift(1)
         df['patients_lag_7'] = df.groupby('city')['patients_admitted'].shift(7)
-        
+
         # Rolling averages
         df['patients_ma_7'] = df.groupby('city')['patients_admitted'].rolling(7, min_periods=1).mean().values
         df['aqi_ma_3'] = df.groupby('city')['aqi'].rolling(3, min_periods=1).mean().values
-        
+
         # Festival encoding (binary for simplicity)
         df['is_festival'] = (df['festival'].notna() & (df['festival'] != '')).astype(int)
-        
+
         # Interaction features
         df['aqi_temp_interaction'] = df['aqi'] * df['temperature']
         df['festival_aqi_interaction'] = df['is_festival'] * df['aqi']
-        
+
         return df
-    
+
     def prepare_features(self, df):
         """Select and prepare feature columns"""
         feature_cols = [
-            'aqi', 'temperature', 'outbreak', 'day_of_week', 
-            'is_weekend', 'day_of_year', 'month', 'patients_lag_1', 
+            'aqi', 'temperature', 'outbreak', 'day_of_week',
+            'is_weekend', 'day_of_year', 'month', 'patients_lag_1',
             'patients_lag_7', 'patients_ma_7', 'aqi_ma_3', 'is_festival',
             'aqi_temp_interaction', 'festival_aqi_interaction'
         ]
-        
+
         # Store feature columns for later use
         self.feature_columns = feature_cols
         return df[feature_cols].dropna()
-    
+
     def train(self, df):
         """Train the model with time series validation"""
         # Engineer features
         df_features = self.engineer_features(df)
         X = self.prepare_features(df_features)
         y = df_features.loc[X.index, 'patients_admitted']
-        
+
         # Time series cross-validation
         tscv = TimeSeriesSplit(n_splits=5)
         cv_scores = []
-        
+
         for train_idx, val_idx in tscv.split(X):
             X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
             y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
-            
+
             self.model.fit(X_train, y_train)
             y_pred = self.model.predict(X_val)
             mae = mean_absolute_error(y_val, y_pred)
             cv_scores.append(mae)
-        
+
         print(f"Cross-validation MAE: {np.mean(cv_scores):.2f} ± {np.std(cv_scores):.2f}")
-        
+
         # Final training on all data
         self.model.fit(X, y)
-        
+
         # Feature importance
         importance_df = pd.DataFrame({
             'feature': self.feature_columns,
             'importance': self.model.feature_importances_
         }).sort_values('importance', ascending=False)
-        
+
         print("\nTop 5 Most Important Features:")
         print(importance_df.head())
-        
+
         return self
-    
+
     def predict_next_7_days(self, df, city, base_date=None):
         """Predict patient load for next 7 days"""
         if base_date is None:
             base_date = df['date'].max()
-        
+
         # Get recent data for the city
         city_data = df[df['city'] == city].copy()
         city_data = self.engineer_features(city_data)
-        
+
         predictions = []
-        
+
         for i in range(7):
             pred_date = pd.to_datetime(base_date) + timedelta(days=i+1)
-            
+
             # Create feature row for prediction
             latest_row = city_data.iloc[-1].copy()
-            
+
             # Update temporal features
             latest_row['day_of_week'] = pred_date.dayofweek
             latest_row['is_weekend'] = int(pred_date.dayofweek >= 5)
             latest_row['day_of_year'] = pred_date.dayofyear
             latest_row['month'] = pred_date.month
-            
+
             # For simplicity, assume no festivals and stable environmental conditions
             # In production, you'd fetch from weather APIs
             latest_row['is_festival'] = 0
             latest_row['festival_aqi_interaction'] = 0
-            
+
             # Prepare feature vector
             X_pred = latest_row[self.feature_columns].values.reshape(1, -1)
-            
+
             # Make prediction
             pred = self.model.predict(X_pred)[0]
             predictions.append({
                 'date': pred_date.strftime('%Y-%m-%d'),
                 'predicted_patients': int(round(pred))
             })
-            
+
             # Update lag features for next iteration
             if i == 0:
                 latest_row['patients_lag_1'] = city_data.iloc[-1]['patients_admitted']
             else:
                 latest_row['patients_lag_1'] = pred
-        
+
         return predictions
-    
+
     def save_model(self, filepath):
         """Save trained model and feature columns"""
         model_data = {
@@ -190,7 +197,7 @@ class HospitalLoadPredictor:
         }
         joblib.dump(model_data, filepath)
         print(f"Model saved to {filepath}")
-    
+
     def load_model(self, filepath):
         """Load trained model and feature columns"""
         model_data = joblib.load(filepath)
@@ -203,18 +210,18 @@ class HospitalLoadPredictor:
 if __name__ == "__main__":
     # Load data
     df = pd.read_csv("hospital_data.csv")
-    
+
     # Initialize and train predictor
     predictor = HospitalLoadPredictor()
     predictor.train(df)
-    
+
     # Make predictions
     predictions = predictor.predict_next_7_days(df, city="Delhi")
-    
+
     print("\n7-Day Forecast for Delhi:")
     for pred in predictions:
         print(f"{pred['date']}: {pred['predicted_patients']} patients")
-    
+
     # Save model
     predictor.save_model("rf_model.joblib")
 ```
@@ -222,24 +229,28 @@ if __name__ == "__main__":
 ### Pitfalls & Solutions
 
 1. **Data Leakage**: Never use future information in lag features
+
    - Solution: Use `groupby('city').shift()` for city-specific lags
 
 2. **Imbalanced Cities**: Different baseline patient volumes
+
    - Solution: Consider per-city models or city encoding
 
 3. **Sparse Festivals**: Low frequency events
+
    - Solution: Binary `is_festival` or group minor/major festivals
 
 4. **Concept Drift**: Model accuracy degrades over time
    - Solution: Implement continuous monitoring (Prompt 11)
 
 ### Evaluation Metrics
+
 ```python
 def evaluate_model(y_true, y_pred):
     mae = mean_absolute_error(y_true, y_pred)
     rmse = np.sqrt(mean_squared_error(y_true, y_pred))
     mape = np.mean(np.abs((y_true - y_pred) / y_true)) * 100
-    
+
     return {
         'MAE': mae,
         'RMSE': rmse,
@@ -252,14 +263,17 @@ def evaluate_model(y_true, y_pred):
 ## Prompt 2: Enhanced Model with Festival & Outbreak Features
 
 ### Purpose
+
 Improve the baseline model by adding categorical features and displaying feature importance.
 
 ### Copilot Prompt
+
 ```
 Improve this model by adding categorical features such as festival name and outbreak level. Encode them properly and retrain the model. Display feature importance after training.
 ```
 
 ### Implementation Enhancement
+
 ```python
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder
 from sklearn.compose import ColumnTransformer
@@ -270,21 +284,21 @@ class EnhancedHospitalPredictor(HospitalLoadPredictor):
     def __init__(self):
         super().__init__()
         self.preprocessor = None
-        
+
     def engineer_features(self, df):
         """Enhanced feature engineering with categorical handling"""
         df = super().engineer_features(df)
-        
+
         # Festival name encoding (keep specific festivals)
         major_festivals = ['Diwali', 'Holi', 'Eid', 'Christmas', 'Dussehra']
         df['festival_name'] = df['festival'].fillna('None')
         df['festival_category'] = df['festival_name'].apply(
             lambda x: x if x in major_festivals else ('Other' if x != 'None' else 'None')
         )
-        
+
         # Outbreak level validation
         df['outbreak'] = df['outbreak'].clip(0, 3).astype(int)
-        
+
         # Seasonal patterns
         df['season'] = df['month'].map({
             12: 'Winter', 1: 'Winter', 2: 'Winter',
@@ -292,39 +306,39 @@ class EnhancedHospitalPredictor(HospitalLoadPredictor):
             6: 'Summer', 7: 'Summer', 8: 'Summer',
             9: 'Autumn', 10: 'Autumn', 11: 'Autumn'
         })
-        
+
         return df
-    
+
     def setup_preprocessor(self, df):
         """Setup column transformer for mixed data types"""
         categorical_features = ['festival_category', 'season']
         numerical_features = [
-            'aqi', 'temperature', 'outbreak', 'day_of_week', 
-            'is_weekend', 'day_of_year', 'month', 'patients_lag_1', 
+            'aqi', 'temperature', 'outbreak', 'day_of_week',
+            'is_weekend', 'day_of_year', 'month', 'patients_lag_1',
             'patients_lag_7', 'patients_ma_7', 'aqi_ma_3',
             'aqi_temp_interaction'
         ]
-        
+
         self.preprocessor = ColumnTransformer(
             transformers=[
                 ('cat', OneHotEncoder(drop='first', handle_unknown='ignore'), categorical_features),
                 ('num', 'passthrough', numerical_features)
             ]
         )
-        
+
         return categorical_features + numerical_features
-    
+
     def plot_feature_importance(self, importance_df, top_n=15):
         """Visualize feature importance"""
         plt.figure(figsize=(10, 8))
         top_features = importance_df.head(top_n)
-        
+
         sns.barplot(data=top_features, x='importance', y='feature', palette='viridis')
         plt.title(f'Top {top_n} Feature Importances')
         plt.xlabel('Importance Score')
         plt.tight_layout()
         plt.show()
-        
+
         return top_features
 
 # Enhanced usage example
@@ -341,7 +355,7 @@ y = df_enhanced.loc[X.index, 'patients_admitted']
 predictor.model.fit(X_transformed, y)
 
 # Get feature names after preprocessing
-feature_names = (predictor.preprocessor.named_transformers_['cat'].get_feature_names_out() 
+feature_names = (predictor.preprocessor.named_transformers_['cat'].get_feature_names_out()
                 + predictor.preprocessor.named_transformers_['num'])
 
 # Feature importance analysis
@@ -358,14 +372,17 @@ predictor.plot_feature_importance(importance_df)
 ## Prompt 3: FastAPI Production Endpoint
 
 ### Purpose
+
 Turn the model into a production-ready microservice with proper validation and error handling.
 
 ### Copilot Prompt
+
 ```
 Create a FastAPI app with an endpoint /predict that accepts JSON input { city, date, aqi, temperature, festival, outbreak } and returns the predicted patient count using the trained model.
 ```
 
 ### Complete FastAPI Implementation
+
 ```python
 from fastapi import FastAPI, HTTPException, Depends
 from pydantic import BaseModel, Field, validator
@@ -411,7 +428,7 @@ class PredictRequest(BaseModel):
     temperature: float = Field(..., ge=-50, le=60, description="Temperature in Celsius")
     festival: Optional[str] = Field(None, max_length=50)
     outbreak: int = Field(0, ge=0, le=3, description="Outbreak level 0-3")
-    
+
     @validator('date')
     def validate_date(cls, v):
         try:
@@ -451,7 +468,7 @@ def preprocess_request(req: PredictRequest) -> pd.DataFrame:
         # Default values for lag features (in production, fetch from database)
         'patients_admitted': [100]  # placeholder for lag calculation
     }
-    
+
     return pd.DataFrame(data)
 
 @app.get("/", response_model=dict)
@@ -477,24 +494,24 @@ async def predict_patient_load(
 ):
     try:
         logger.info(f"Prediction request for {request.city} on {request.date}")
-        
+
         # Preprocess input
         input_df = preprocess_request(request)
-        
+
         # Make prediction (simplified for this example)
         # In production, you'd use the full engineered features
         predictions = predictor.predict_next_7_days(input_df, request.city)
-        
+
         # Return first prediction
         predicted_count = predictions[0]['predicted_patients']
-        
+
         # Calculate confidence interval (mock implementation)
         # In production, use quantile regression or ensemble methods
         confidence = [
             int(predicted_count * 0.85),  # lower bound
             int(predicted_count * 1.15)   # upper bound
         ]
-        
+
         return PredictResponse(
             predicted_patients=predicted_count,
             confidence_interval=confidence,
@@ -507,7 +524,7 @@ async def predict_patient_load(
                 "outbreak_level": request.outbreak
             }
         )
-        
+
     except Exception as e:
         logger.error(f"Prediction error: {e}")
         raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
@@ -520,7 +537,7 @@ async def predict_batch(
     """Batch prediction endpoint for multiple requests"""
     if len(requests) > 100:
         raise HTTPException(status_code=400, detail="Maximum 100 requests per batch")
-    
+
     results = []
     for req in requests:
         try:
@@ -530,7 +547,7 @@ async def predict_batch(
             logger.error(f"Batch prediction error for {req.city}: {e}")
             # Continue with other predictions
             continue
-    
+
     return results
 
 # Custom exception handlers
@@ -549,6 +566,7 @@ if __name__ == "__main__":
 ```
 
 ### Docker Configuration
+
 ```dockerfile
 FROM python:3.11-slim
 
@@ -565,6 +583,7 @@ CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
 ```
 
 ### Requirements.txt
+
 ```
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
@@ -580,56 +599,61 @@ python-multipart==0.0.6
 ## Prompt 4: Express.js Backend Proxy
 
 ### Purpose
+
 Create a Node.js backend that acts as a proxy between the frontend and FastAPI service.
 
 ### Copilot Prompt
+
 ```
 Create an Express.js backend with a route /api/predict that fetches patient load predictions from a Python FastAPI service using Axios and returns results to the frontend.
 ```
 
 ### Complete Express.js Implementation
+
 ```javascript
-const express = require('express');
-const axios = require('axios');
-const cors = require('cors');
-const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
-const { body, validationResult } = require('express-validator');
-const winston = require('winston');
-require('dotenv').config();
+const express = require("express");
+const axios = require("axios");
+const cors = require("cors");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
+const { body, validationResult } = require("express-validator");
+const winston = require("winston");
+require("dotenv").config();
 
 // Setup logging
 const logger = winston.createLogger({
-  level: 'info',
+  level: "info",
   format: winston.format.combine(
     winston.format.timestamp(),
     winston.format.json()
   ),
   transports: [
-    new winston.transports.File({ filename: 'error.log', level: 'error' }),
-    new winston.transports.Console()
-  ]
+    new winston.transports.File({ filename: "error.log", level: "error" }),
+    new winston.transports.Console(),
+  ],
 });
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const FASTAPI_URL = process.env.FASTAPI_URL || 'http://localhost:8000';
+const FASTAPI_URL = process.env.FASTAPI_URL || "http://localhost:8000";
 
 // Middleware
 app.use(helmet());
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true
-}));
-app.use(express.json({ limit: '10mb' }));
+app.use(
+  cors({
+    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    credentials: true,
+  })
+);
+app.use(express.json({ limit: "10mb" }));
 
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP'
+  message: "Too many requests from this IP",
 });
-app.use('/api', limiter);
+app.use("/api", limiter);
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -637,19 +661,19 @@ app.use((req, res, next) => {
     method: req.method,
     url: req.url,
     ip: req.ip,
-    userAgent: req.get('User-Agent')
+    userAgent: req.get("User-Agent"),
   });
   next();
 });
 
 // Validation middleware
 const validatePredictRequest = [
-  body('city').notEmpty().isLength({ min: 1, max: 100 }),
-  body('date').isISO8601().toDate(),
-  body('aqi').isInt({ min: 0, max: 500 }),
-  body('temperature').isFloat({ min: -50, max: 60 }),
-  body('festival').optional().isLength({ max: 50 }),
-  body('outbreak').optional().isInt({ min: 0, max: 3 })
+  body("city").notEmpty().isLength({ min: 1, max: 100 }),
+  body("date").isISO8601().toDate(),
+  body("aqi").isInt({ min: 0, max: 500 }),
+  body("temperature").isFloat({ min: -50, max: 60 }),
+  body("festival").optional().isLength({ max: 50 }),
+  body("outbreak").optional().isInt({ min: 0, max: 3 }),
 ];
 
 // Axios instance with circuit breaker pattern
@@ -658,8 +682,8 @@ const createAxiosInstance = () => {
     baseURL: FASTAPI_URL,
     timeout: 30000,
     headers: {
-      'Content-Type': 'application/json'
-    }
+      "Content-Type": "application/json",
+    },
   });
 
   // Request interceptor
@@ -669,7 +693,7 @@ const createAxiosInstance = () => {
       return config;
     },
     (error) => {
-      logger.error('Request interceptor error:', error);
+      logger.error("Request interceptor error:", error);
       return Promise.reject(error);
     }
   );
@@ -678,10 +702,10 @@ const createAxiosInstance = () => {
   instance.interceptors.response.use(
     (response) => response,
     (error) => {
-      logger.error('API request failed:', {
+      logger.error("API request failed:", {
         url: error.config?.url,
         status: error.response?.status,
-        message: error.message
+        message: error.message,
       });
       return Promise.reject(error);
     }
@@ -699,30 +723,34 @@ function calculateResourceRecommendations(predictedPatients, config = {}) {
     patientsPerNurse: 8,
     oxygenPerPatient: 0.1,
     bedsBuffer: 1.1,
-    minStaff: { doctors: 2, nurses: 5 }
+    minStaff: { doctors: 2, nurses: 5 },
   };
-  
+
   const cfg = { ...defaults, ...config };
-  
+
   const doctors = Math.max(
     cfg.minStaff.doctors,
     Math.ceil(predictedPatients / cfg.patientsPerDoctor)
   );
-  
+
   const nurses = Math.max(
     cfg.minStaff.nurses,
     Math.ceil(predictedPatients / cfg.patientsPerNurse)
   );
-  
+
   const oxygenCylinders = Math.ceil(predictedPatients * cfg.oxygenPerPatient);
   const beds = Math.ceil(predictedPatients * cfg.bedsBuffer);
-  
+
   return {
     staff: { doctors, nurses },
     supplies: { oxygenCylinders, beds },
     totalCost: estimateCost({ doctors, nurses, oxygenCylinders }),
-    urgencyLevel: predictedPatients > 200 ? 'high' : 
-                 predictedPatients > 150 ? 'medium' : 'low'
+    urgencyLevel:
+      predictedPatients > 200
+        ? "high"
+        : predictedPatients > 150
+        ? "medium"
+        : "low",
   };
 }
 
@@ -730,9 +758,9 @@ function estimateCost(resources) {
   const costs = {
     doctorPerDay: 5000,
     nursePerDay: 2000,
-    oxygenCylinder: 500
+    oxygenCylinder: 500,
   };
-  
+
   return (
     resources.doctors * costs.doctorPerDay +
     resources.nurses * costs.nursePerDay +
@@ -741,50 +769,50 @@ function estimateCost(resources) {
 }
 
 // Routes
-app.get('/', (req, res) => {
+app.get("/", (req, res) => {
   res.json({
-    service: 'MediPulse AI Backend',
-    version: '1.0.0',
-    status: 'healthy',
+    service: "MediPulse AI Backend",
+    version: "1.0.0",
+    status: "healthy",
     endpoints: {
-      predict: '/api/predict',
-      batch: '/api/predict/batch',
-      health: '/api/health'
-    }
+      predict: "/api/predict",
+      batch: "/api/predict/batch",
+      health: "/api/health",
+    },
   });
 });
 
-app.get('/api/health', async (req, res) => {
+app.get("/api/health", async (req, res) => {
   try {
-    const response = await apiClient.get('/health');
+    const response = await apiClient.get("/health");
     res.json({
-      backend: 'healthy',
+      backend: "healthy",
       fastapi: response.data,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
     res.status(503).json({
-      backend: 'healthy',
-      fastapi: 'unavailable',
+      backend: "healthy",
+      fastapi: "unavailable",
       error: error.message,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   }
 });
 
-app.post('/api/predict', validatePredictRequest, async (req, res) => {
+app.post("/api/predict", validatePredictRequest, async (req, res) => {
   try {
     // Validate request
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
-        error: 'Validation failed',
-        details: errors.array()
+        error: "Validation failed",
+        details: errors.array(),
       });
     }
 
     // Call FastAPI service
-    const response = await apiClient.post('/predict', req.body);
+    const response = await apiClient.post("/predict", req.body);
     const prediction = response.data;
 
     // Calculate resource recommendations
@@ -802,62 +830,64 @@ app.post('/api/predict', validatePredictRequest, async (req, res) => {
       advisories,
       metadata: {
         processingTime: Date.now() - req.startTime,
-        requestId: req.headers['x-request-id'] || 'unknown'
-      }
+        requestId: req.headers["x-request-id"] || "unknown",
+      },
     };
 
-    logger.info(`Prediction successful for ${req.body.city}: ${prediction.predicted_patients} patients`);
+    logger.info(
+      `Prediction successful for ${req.body.city}: ${prediction.predicted_patients} patients`
+    );
     res.json(result);
-
   } catch (error) {
-    logger.error('Prediction endpoint error:', error);
-    
+    logger.error("Prediction endpoint error:", error);
+
     if (error.response?.status === 422) {
       res.status(400).json({
-        error: 'Invalid input data',
-        details: error.response.data.detail
+        error: "Invalid input data",
+        details: error.response.data.detail,
       });
-    } else if (error.code === 'ECONNREFUSED') {
+    } else if (error.code === "ECONNREFUSED") {
       res.status(503).json({
-        error: 'Prediction service unavailable',
-        message: 'Please try again later'
+        error: "Prediction service unavailable",
+        message: "Please try again later",
       });
     } else {
       res.status(500).json({
-        error: 'Internal server error',
-        message: 'An unexpected error occurred'
+        error: "Internal server error",
+        message: "An unexpected error occurred",
       });
     }
   }
 });
 
-app.post('/api/predict/batch', async (req, res) => {
+app.post("/api/predict/batch", async (req, res) => {
   try {
     const requests = req.body;
-    
+
     if (!Array.isArray(requests) || requests.length > 50) {
       return res.status(400).json({
-        error: 'Invalid batch request',
-        message: 'Provide array of 1-50 prediction requests'
+        error: "Invalid batch request",
+        message: "Provide array of 1-50 prediction requests",
       });
     }
 
-    const response = await apiClient.post('/predict/batch', requests);
+    const response = await apiClient.post("/predict/batch", requests);
     const predictions = response.data;
 
     // Add recommendations to each prediction
-    const enhancedPredictions = predictions.map(pred => ({
+    const enhancedPredictions = predictions.map((pred) => ({
       ...pred,
-      recommendations: calculateResourceRecommendations(pred.predicted_patients)
+      recommendations: calculateResourceRecommendations(
+        pred.predicted_patients
+      ),
     }));
 
     res.json(enhancedPredictions);
-
   } catch (error) {
-    logger.error('Batch prediction error:', error);
+    logger.error("Batch prediction error:", error);
     res.status(500).json({
-      error: 'Batch prediction failed',
-      message: error.message
+      error: "Batch prediction failed",
+      message: error.message,
     });
   }
 });
@@ -870,49 +900,51 @@ function generateAdvisories(input, prediction) {
   // AQI-based advisories
   if (aqi > 300) {
     advisories.push({
-      type: 'environmental',
-      severity: 'high',
-      message: 'Hazardous air quality detected. Prepare additional respiratory support and notify at-risk patients.',
+      type: "environmental",
+      severity: "high",
+      message:
+        "Hazardous air quality detected. Prepare additional respiratory support and notify at-risk patients.",
       actions: [
-        'Increase oxygen cylinder stock by 25%',
-        'Alert pulmonology department',
-        'Issue public health advisory'
-      ]
+        "Increase oxygen cylinder stock by 25%",
+        "Alert pulmonology department",
+        "Issue public health advisory",
+      ],
     });
   } else if (aqi > 200) {
     advisories.push({
-      type: 'environmental',
-      severity: 'medium',
-      message: 'Poor air quality may increase respiratory admissions.',
-      actions: ['Monitor respiratory patients closely']
+      type: "environmental",
+      severity: "medium",
+      message: "Poor air quality may increase respiratory admissions.",
+      actions: ["Monitor respiratory patients closely"],
     });
   }
 
   // Patient surge advisories
   if (patients > 200) {
     advisories.push({
-      type: 'capacity',
-      severity: 'high',
-      message: 'High patient surge predicted. Implement surge protocols.',
+      type: "capacity",
+      severity: "high",
+      message: "High patient surge predicted. Implement surge protocols.",
       actions: [
-        'Activate additional staff shifts',
-        'Prepare overflow areas',
-        'Coordinate with nearby hospitals'
-      ]
+        "Activate additional staff shifts",
+        "Prepare overflow areas",
+        "Coordinate with nearby hospitals",
+      ],
     });
   }
 
   // Outbreak advisories
   if (outbreak > 1) {
     advisories.push({
-      type: 'outbreak',
-      severity: outbreak > 2 ? 'critical' : 'high',
-      message: 'Active outbreak detected. Implement infection control measures.',
+      type: "outbreak",
+      severity: outbreak > 2 ? "critical" : "high",
+      message:
+        "Active outbreak detected. Implement infection control measures.",
       actions: [
-        'Activate isolation protocols',
-        'Increase PPE availability',
-        'Notify health authorities'
-      ]
+        "Activate isolation protocols",
+        "Increase PPE availability",
+        "Notify health authorities",
+      ],
     });
   }
 
@@ -921,26 +953,26 @@ function generateAdvisories(input, prediction) {
 
 // Error handling middleware
 app.use((error, req, res, next) => {
-  logger.error('Unhandled error:', error);
+  logger.error("Unhandled error:", error);
   res.status(500).json({
-    error: 'Internal server error',
-    timestamp: new Date().toISOString()
+    error: "Internal server error",
+    timestamp: new Date().toISOString(),
   });
 });
 
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
-    error: 'Endpoint not found',
-    requested: req.originalUrl
+    error: "Endpoint not found",
+    requested: req.originalUrl,
   });
 });
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, shutting down gracefully');
+process.on("SIGTERM", () => {
+  logger.info("SIGTERM received, shutting down gracefully");
   server.close(() => {
-    logger.info('Process terminated');
+    logger.info("Process terminated");
     process.exit(0);
   });
 });
@@ -954,6 +986,7 @@ module.exports = app;
 ```
 
 ### Package.json
+
 ```json
 {
   "name": "medipulse-backend",
@@ -990,27 +1023,30 @@ module.exports = app;
 ## Prompt 5: Supply & Staffing Recommendations
 
 ### Purpose
+
 Translate predicted patient counts into actionable resource planning with configurable rules.
 
 ### Copilot Prompt
+
 ```
 Add a function in Node.js that calculates recommended staff and medical supplies based on the predicted patient count (e.g., 1 doctor per 20 patients, 5 oxygen cylinders per 50 patients).
 ```
 
 ### Advanced Resource Calculator
+
 ```javascript
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 
 class ResourceCalculator {
-  constructor(configPath = './config/resource-config.json') {
+  constructor(configPath = "./config/resource-config.json") {
     this.config = this.loadConfig(configPath);
     this.inventory = new Map();
   }
 
   loadConfig(configPath) {
     try {
-      const configData = fs.readFileSync(configPath, 'utf8');
+      const configData = fs.readFileSync(configPath, "utf8");
       return JSON.parse(configData);
     } catch (error) {
       console.warn(`Config file not found, using defaults: ${error.message}`);
@@ -1028,8 +1064,8 @@ class ResourceCalculator {
           departments: {
             emergency: { ratio: 0.3, minCount: 1 },
             pulmonology: { ratio: 0.2, minCount: 1 },
-            general: { ratio: 0.5, minCount: 1 }
-          }
+            general: { ratio: 0.5, minCount: 1 },
+          },
         },
         nurses: {
           patientsPerNurse: 8,
@@ -1038,34 +1074,34 @@ class ResourceCalculator {
           departments: {
             emergency: { ratio: 0.4, minCount: 2 },
             pulmonology: { ratio: 0.3, minCount: 1 },
-            general: { ratio: 0.3, minCount: 2 }
-          }
+            general: { ratio: 0.3, minCount: 2 },
+          },
         },
         technicians: {
           patientsPerTech: 50,
-          minimumCount: 2
-        }
+          minimumCount: 2,
+        },
       },
       supplies: {
         oxygenCylinders: {
           patientsPerUnit: 10,
           bufferPercentage: 0.2,
-          minimumStock: 5
+          minimumStock: 5,
         },
         ventilators: {
           patientsPerUnit: 100,
           criticalCareRatio: 0.1,
-          minimumStock: 2
+          minimumStock: 2,
         },
         beds: {
           occupancyTarget: 0.85,
-          bufferPercentage: 0.15
+          bufferPercentage: 0.15,
         },
         ppe: {
           masksPerPatient: 3,
           glovesPerPatient: 5,
-          sanitizerPerPatient: 0.1 // liters
-        }
+          sanitizerPerPatient: 0.1, // liters
+        },
       },
       costs: {
         doctor: { dailyRate: 5000, overtimeMultiplier: 1.5 },
@@ -1073,12 +1109,12 @@ class ResourceCalculator {
         technician: { dailyRate: 1500, overtimeMultiplier: 1.5 },
         oxygenCylinder: { unitCost: 500 },
         ventilator: { dailyRental: 2000 },
-        bed: { dailyRate: 1000 }
+        bed: { dailyRate: 1000 },
       },
       thresholds: {
         surge: { low: 120, medium: 180, high: 250 },
-        icu: { percentage: 0.15 }
-      }
+        icu: { percentage: 0.15 },
+      },
     };
   }
 
@@ -1091,19 +1127,26 @@ class ResourceCalculator {
     const config = this.config.staffing;
 
     // Adjust predictions based on context
-    const adjustedPatients = this.adjustForContext(predictedPatients, { aqi, outbreak, festivalFactor });
+    const adjustedPatients = this.adjustForContext(predictedPatients, {
+      aqi,
+      outbreak,
+      festivalFactor,
+    });
 
     const staffing = {
       doctors: this.calculateDoctors(adjustedPatients, config.doctors, context),
       nurses: this.calculateNurses(adjustedPatients, config.nurses, context),
-      technicians: this.calculateTechnicians(adjustedPatients, config.technicians)
+      technicians: this.calculateTechnicians(
+        adjustedPatients,
+        config.technicians
+      ),
     };
 
     return {
       ...staffing,
       total: this.calculateTotalStaffCost(staffing),
       surge: this.determineSurgeLevel(adjustedPatients),
-      adjustedPatients
+      adjustedPatients,
     };
   }
 
@@ -1125,25 +1168,31 @@ class ResourceCalculator {
     // AQI adjustment for pulmonology
     if (context.aqi > 200) {
       const aqiMultiplier = Math.min(1.5, 1 + (context.aqi - 200) / 1000);
-      departments.pulmonology = Math.ceil(departments.pulmonology * aqiMultiplier);
+      departments.pulmonology = Math.ceil(
+        departments.pulmonology * aqiMultiplier
+      );
     }
 
-    const total = Object.values(departments).reduce((sum, count) => sum + count, 0);
+    const total = Object.values(departments).reduce(
+      (sum, count) => sum + count,
+      0
+    );
     const isOvertime = patients > config.overtimeThreshold;
 
     return {
       total,
       departments,
       overtime: isOvertime,
-      cost: this.calculateStaffCost('doctor', total, isOvertime)
+      cost: this.calculateStaffCost("doctor", total, isOvertime),
     };
   }
 
   calculateNurses(patients, config, context) {
-    const baseCount = Math.max(
-      config.minimumCount,
-      Math.ceil(patients / config.patientsPerNurse)
-    ) * config.shiftMultiplier;
+    const baseCount =
+      Math.max(
+        config.minimumCount,
+        Math.ceil(patients / config.patientsPerNurse)
+      ) * config.shiftMultiplier;
 
     const departments = {};
     for (const [dept, deptConfig] of Object.entries(config.departments)) {
@@ -1153,12 +1202,15 @@ class ResourceCalculator {
       );
     }
 
-    const total = Object.values(departments).reduce((sum, count) => sum + count, 0);
+    const total = Object.values(departments).reduce(
+      (sum, count) => sum + count,
+      0
+    );
 
     return {
       total,
       departments,
-      cost: this.calculateStaffCost('nurse', total, false)
+      cost: this.calculateStaffCost("nurse", total, false),
     };
   }
 
@@ -1170,7 +1222,7 @@ class ResourceCalculator {
 
     return {
       total: count,
-      cost: this.calculateStaffCost('technician', count, false)
+      cost: this.calculateStaffCost("technician", count, false),
     };
   }
 
@@ -1179,22 +1231,28 @@ class ResourceCalculator {
     const config = this.config.supplies;
 
     const supplies = {
-      oxygen: this.calculateOxygen(predictedPatients, config.oxygenCylinders, { aqi }),
-      ventilators: this.calculateVentilators(predictedPatients, config.ventilators, { icuRatio }),
+      oxygen: this.calculateOxygen(predictedPatients, config.oxygenCylinders, {
+        aqi,
+      }),
+      ventilators: this.calculateVentilators(
+        predictedPatients,
+        config.ventilators,
+        { icuRatio }
+      ),
       beds: this.calculateBeds(predictedPatients, config.beds),
-      ppe: this.calculatePPE(predictedPatients, config.ppe, { outbreak })
+      ppe: this.calculatePPE(predictedPatients, config.ppe, { outbreak }),
     };
 
     return {
       ...supplies,
       totalCost: this.calculateSupplyCost(supplies),
-      shortages: this.identifyShortages(supplies)
+      shortages: this.identifyShortages(supplies),
     };
   }
 
   calculateOxygen(patients, config, context) {
     let baseNeed = Math.ceil(patients / config.patientsPerUnit);
-    
+
     // AQI adjustment
     if (context.aqi > 150) {
       const aqiMultiplier = 1 + Math.min(0.5, (context.aqi - 150) / 500);
@@ -1203,8 +1261,8 @@ class ResourceCalculator {
 
     const withBuffer = Math.ceil(baseNeed * (1 + config.bufferPercentage));
     const recommended = Math.max(config.minimumStock, withBuffer);
-    
-    const currentStock = this.inventory.get('oxygenCylinders') || 0;
+
+    const currentStock = this.inventory.get("oxygenCylinders") || 0;
     const shortage = Math.max(0, recommended - currentStock);
 
     return {
@@ -1212,16 +1270,18 @@ class ResourceCalculator {
       recommended,
       currentStock,
       shortage,
-      cost: this.calculateSupplyItemCost('oxygenCylinder', recommended)
+      cost: this.calculateSupplyItemCost("oxygenCylinder", recommended),
     };
   }
 
   calculateVentilators(patients, config, context) {
     const icuPatients = Math.ceil(patients * context.icuRatio);
-    const baseNeed = Math.ceil(icuPatients / config.patientsPerUnit * config.criticalCareRatio);
+    const baseNeed = Math.ceil(
+      (icuPatients / config.patientsPerUnit) * config.criticalCareRatio
+    );
     const recommended = Math.max(config.minimumStock, baseNeed);
-    
-    const currentStock = this.inventory.get('ventilators') || 0;
+
+    const currentStock = this.inventory.get("ventilators") || 0;
     const shortage = Math.max(0, recommended - currentStock);
 
     return {
@@ -1230,15 +1290,15 @@ class ResourceCalculator {
       currentStock,
       shortage,
       icuPatients,
-      cost: this.calculateSupplyItemCost('ventilator', recommended, true) // daily rental
+      cost: this.calculateSupplyItemCost("ventilator", recommended, true), // daily rental
     };
   }
 
   calculateBeds(patients, config) {
     const needed = Math.ceil(patients / config.occupancyTarget);
     const withBuffer = Math.ceil(needed * (1 + config.bufferPercentage));
-    
-    const currentCapacity = this.inventory.get('beds') || 0;
+
+    const currentCapacity = this.inventory.get("beds") || 0;
     const shortage = Math.max(0, withBuffer - currentCapacity);
 
     return {
@@ -1247,22 +1307,22 @@ class ResourceCalculator {
       currentCapacity,
       shortage,
       occupancyRate: currentCapacity > 0 ? patients / currentCapacity : 1,
-      cost: this.calculateSupplyItemCost('bed', withBuffer, true) // daily rate
+      cost: this.calculateSupplyItemCost("bed", withBuffer, true), // daily rate
     };
   }
 
   calculatePPE(patients, config, context) {
     let multiplier = 1;
-    
+
     // Outbreak adjustment
     if (context.outbreak > 1) {
-      multiplier = 1 + (context.outbreak * 0.5);
+      multiplier = 1 + context.outbreak * 0.5;
     }
 
     return {
       masks: Math.ceil(patients * config.masksPerPatient * multiplier),
       gloves: Math.ceil(patients * config.glovesPerPatient * multiplier),
-      sanitizer: Math.ceil(patients * config.sanitizerPerPatient * multiplier)
+      sanitizer: Math.ceil(patients * config.sanitizerPerPatient * multiplier),
     };
   }
 
@@ -1275,12 +1335,12 @@ class ResourceCalculator {
     // AQI adjustment
     if (context.aqi > 100) {
       const aqiIncrease = Math.min(0.3, (context.aqi - 100) / 1000);
-      adjusted *= (1 + aqiIncrease);
+      adjusted *= 1 + aqiIncrease;
     }
 
     // Outbreak adjustment
     if (context.outbreak > 0) {
-      adjusted *= (1 + context.outbreak * 0.2);
+      adjusted *= 1 + context.outbreak * 0.2;
     }
 
     return Math.round(adjusted);
@@ -1294,29 +1354,33 @@ class ResourceCalculator {
 
   calculateSupplyItemCost(itemType, quantity, isDaily = false) {
     const config = this.config.costs[itemType];
-    const rate = isDaily ? config.dailyRental || config.dailyRate : config.unitCost;
+    const rate = isDaily
+      ? config.dailyRental || config.dailyRate
+      : config.unitCost;
     return rate * quantity;
   }
 
   calculateTotalStaffCost(staffing) {
-    return staffing.doctors.cost + staffing.nurses.cost + staffing.technicians.cost;
+    return (
+      staffing.doctors.cost + staffing.nurses.cost + staffing.technicians.cost
+    );
   }
 
   calculateSupplyCost(supplies) {
     return Object.values(supplies)
-      .filter(item => item.cost !== undefined)
+      .filter((item) => item.cost !== undefined)
       .reduce((total, item) => total + item.cost, 0);
   }
 
   identifyShortages(supplies) {
     const shortages = [];
-    
+
     Object.entries(supplies).forEach(([type, data]) => {
       if (data.shortage && data.shortage > 0) {
         shortages.push({
           type,
           shortage: data.shortage,
-          priority: this.getShortragePriority(type, data.shortage)
+          priority: this.getShortragePriority(type, data.shortage),
         });
       }
     });
@@ -1329,30 +1393,30 @@ class ResourceCalculator {
       oxygen: 10,
       ventilators: 9,
       beds: 8,
-      ppe: 7
+      ppe: 7,
     };
     return (priorities[type] || 5) * Math.min(shortage, 10);
   }
 
   determineSurgeLevel(patients) {
     const thresholds = this.config.thresholds.surge;
-    
-    if (patients >= thresholds.high) return 'critical';
-    if (patients >= thresholds.medium) return 'high';
-    if (patients >= thresholds.low) return 'medium';
-    return 'normal';
+
+    if (patients >= thresholds.high) return "critical";
+    if (patients >= thresholds.medium) return "high";
+    if (patients >= thresholds.low) return "medium";
+    return "normal";
   }
 
   generateRecommendations(predictedPatients, context = {}) {
     const staffing = this.calculateStaffing(predictedPatients, context);
     const supplies = this.calculateSupplies(predictedPatients, context);
-    
+
     const recommendations = {
       staffing,
       supplies,
       totalCost: staffing.total + supplies.totalCost,
       surgeLevel: staffing.surge,
-      actionItems: this.generateActionItems(staffing, supplies, context)
+      actionItems: this.generateActionItems(staffing, supplies, context),
     };
 
     return recommendations;
@@ -1364,39 +1428,39 @@ class ResourceCalculator {
     // Staffing actions
     if (staffing.doctors.overtime) {
       actions.push({
-        priority: 'high',
-        category: 'staffing',
-        action: 'Activate overtime protocols for medical staff',
-        timeline: 'immediate'
+        priority: "high",
+        category: "staffing",
+        action: "Activate overtime protocols for medical staff",
+        timeline: "immediate",
       });
     }
 
     // Supply actions
-    supplies.shortages.forEach(shortage => {
+    supplies.shortages.forEach((shortage) => {
       actions.push({
-        priority: shortage.priority > 8 ? 'critical' : 'high',
-        category: 'supplies',
+        priority: shortage.priority > 8 ? "critical" : "high",
+        category: "supplies",
         action: `Order ${shortage.shortage} additional ${shortage.type}`,
-        timeline: shortage.priority > 8 ? 'immediate' : 'within 24h'
+        timeline: shortage.priority > 8 ? "immediate" : "within 24h",
       });
     });
 
     // Context-specific actions
     if (context.aqi > 300) {
       actions.push({
-        priority: 'high',
-        category: 'environmental',
-        action: 'Issue public health advisory for respiratory risk groups',
-        timeline: 'within 2h'
+        priority: "high",
+        category: "environmental",
+        action: "Issue public health advisory for respiratory risk groups",
+        timeline: "within 2h",
       });
     }
 
     if (context.outbreak > 1) {
       actions.push({
-        priority: 'critical',
-        category: 'infection_control',
-        action: 'Activate infection control protocols',
-        timeline: 'immediate'
+        priority: "critical",
+        category: "infection_control",
+        action: "Activate infection control protocols",
+        timeline: "immediate",
       });
     }
 
@@ -1422,16 +1486,16 @@ module.exports = ResourceCalculator;
 // Usage example
 if (require.main === module) {
   const calculator = new ResourceCalculator();
-  
+
   // Set current inventory
-  calculator.updateInventory('oxygenCylinders', 15);
-  calculator.updateInventory('ventilators', 3);
-  calculator.updateInventory('beds', 120);
+  calculator.updateInventory("oxygenCylinders", 15);
+  calculator.updateInventory("ventilators", 3);
+  calculator.updateInventory("beds", 120);
 
   const context = {
     aqi: 320,
     outbreak: 1,
-    festivalFactor: 1.2
+    festivalFactor: 1.2,
   };
 
   const recommendations = calculator.generateRecommendations(180, context);
@@ -1440,6 +1504,7 @@ if (require.main === module) {
 ```
 
 ### Configuration File (config/resource-config.json)
+
 ```json
 {
   "hospital_info": {

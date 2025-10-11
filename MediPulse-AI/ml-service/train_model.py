@@ -107,8 +107,9 @@ class HospitalLoadPredictor:
                 ('num', 'passthrough', numerical_features)
             ]
         )
-        
-        return categorical_features + numerical_features
+
+        self.feature_columns = categorical_features + numerical_features
+        return self.feature_columns
     
     def train(self, df):
         """Train the model with cross-validation"""
@@ -242,11 +243,33 @@ class HospitalLoadPredictor:
                 else:
                     df_features[col] = df_features['temperature']
         
-        # Get feature columns used in training
-        feature_cols = self.setup_preprocessor(df_features)
-        X = df_features[feature_cols]
-        
-        # Transform and predict
+        # Ensure feature columns are available
+        logger.info(f"Predicting with {len(self.feature_columns)} feature columns")
+        if not self.feature_columns:
+            raise ValueError("Model is missing feature column metadata. Please retrain the model.")
+
+        # Some engineered columns may be absent during inference; add defaults
+        categorical_defaults = {
+            'festival_category': 'None',
+            'season': 'Winter',
+            'aqi_category': 'Moderate',
+            'temp_category': 'Moderate'
+        }
+
+        for col in self.feature_columns:
+            if col not in df_features.columns:
+                default_value = categorical_defaults.get(col, 0)
+                df_features[col] = default_value
+
+        # Fill NaN for categorical columns if present
+        for col, default_value in categorical_defaults.items():
+            if col in df_features.columns:
+                df_features[col] = df_features[col].fillna(default_value)
+
+        # Align columns to training order and drop any extras
+        X = df_features[self.feature_columns]
+
+        # Transform and predict using the fitted preprocessor
         X_transformed = self.preprocessor.transform(X)
         prediction = self.model.predict(X_transformed)[0]
         

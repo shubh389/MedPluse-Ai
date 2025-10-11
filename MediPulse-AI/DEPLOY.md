@@ -32,6 +32,7 @@ vercel
 ### Option 2: Deploy from Git Repository
 
 1. **Push to GitHub:**
+
    ```powershell
    git init
    git add .
@@ -59,11 +60,12 @@ ML_SERVICE_URL=/api/ml
 
 # Optional - SMS Alerts (Twilio)
 TWILIO_ACCOUNT_SID=your_account_sid
-TWILIO_AUTH_TOKEN=your_auth_token  
+TWILIO_AUTH_TOKEN=your_auth_token
 TWILIO_PHONE_NUMBER=your_phone_number
 ```
 
 **To add environment variables:**
+
 1. Go to your project dashboard on Vercel
 2. Click "Settings" → "Environment Variables"
 3. Add each variable above
@@ -73,7 +75,7 @@ TWILIO_PHONE_NUMBER=your_phone_number
 Vercel should auto-detect these settings from `vercel.json`:
 
 - **Framework Preset**: Other
-- **Build Command**: `npm run vercel-build` 
+- **Build Command**: `npm run vercel-build`
 - **Output Directory**: `frontend/build`
 - **Install Command**: `npm install`
 
@@ -109,15 +111,17 @@ After deployment, your API will be available at:
 ## Testing Your Deployment
 
 ### 1. Health Checks
+
 ```powershell
 # Test API health
 curl https://your-project.vercel.app/api/health
 
-# Test ML health  
+# Test ML health
 curl https://your-project.vercel.app/api/ml/health
 ```
 
 ### 2. Make a Prediction
+
 ```powershell
 curl -X POST https://your-project.vercel.app/api/predict \
   -H "Content-Type: application/json" \
@@ -137,6 +141,7 @@ curl -X POST https://your-project.vercel.app/api/predict \
 ## Custom Domain (Optional)
 
 1. **Add Domain in Vercel:**
+
    - Go to Project Settings → Domains
    - Add your custom domain (e.g., `medipulse.yourdomain.com`)
 
@@ -147,39 +152,45 @@ curl -X POST https://your-project.vercel.app/api/predict \
 ## Monitoring & Analytics
 
 ### Built-in Analytics
+
 - Enable Vercel Analytics in Project Settings
 - View performance metrics and usage statistics
 
 ### Logging
+
 - View function logs in Vercel dashboard
 - Use `console.log()` statements for debugging
 
 ### Error Monitoring
+
 ```javascript
 // Add to your API functions for better error tracking
-console.error('Error details:', error);
+console.error("Error details:", error);
 ```
 
 ## Performance Optimization
 
 ### Function Regions
+
 ```json
 // In vercel.json, specify regions
 {
   "functions": {
     "api/predict.js": {
       "maxDuration": 30,
-      "regions": ["bom1", "sin1"]  // Mumbai, Singapore
+      "regions": ["bom1", "sin1"] // Mumbai, Singapore
     }
   }
 }
 ```
 
 ### Caching
+
 - Static assets are cached automatically
 - API responses can use cache headers:
+
 ```javascript
-res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
+res.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate");
 ```
 
 ## Troubleshooting
@@ -187,12 +198,14 @@ res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
 ### Common Issues
 
 1. **Build Failures:**
+
    ```powershell
    # Check build logs in Vercel dashboard
    # Ensure all dependencies are in package.json
    ```
 
 2. **Function Timeouts:**
+
    ```json
    // Increase timeout in vercel.json
    {
@@ -205,9 +218,10 @@ res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
    ```
 
 3. **CORS Errors:**
+
    ```javascript
    // Already handled in API functions
-   res.setHeader('Access-Control-Allow-Origin', '*');
+   res.setHeader("Access-Control-Allow-Origin", "*");
    ```
 
 4. **Python Dependencies:**
@@ -219,13 +233,15 @@ res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
 ### Debugging
 
 1. **View Function Logs:**
+
    - Vercel Dashboard → Functions → View Logs
 
 2. **Local Development:**
+
    ```powershell
    # Run Vercel dev server
    vercel dev
-   
+
    # Access local version
    # http://localhost:3000
    ```
@@ -239,10 +255,12 @@ res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
 ## Updating Your Deployment
 
 ### Automatic Deployments
+
 - Push to main branch triggers auto-deployment
 - Preview deployments for pull requests
 
 ### Manual Deployments
+
 ```powershell
 # Redeploy current code
 vercel --prod
@@ -254,11 +272,13 @@ vercel --prod --git-branch feature-branch
 ## Cost Optimization
 
 ### Vercel Free Tier Limits
+
 - **Function Executions**: 100GB-hours/month
-- **Bandwidth**: 100GB/month  
+- **Bandwidth**: 100GB/month
 - **Build Time**: 6,000 minutes/month
 
 ### Optimization Tips
+
 1. **Cache Predictions**: Reduce ML function calls
 2. **Optimize Bundle**: Remove unused dependencies
 3. **Use Edge Functions**: For faster response times
